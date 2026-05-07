@@ -26,6 +26,15 @@ CREATE TABLE IF NOT EXISTS product_parameters (
 
 CREATE INDEX IF NOT EXISTS idx_product_parameters_product
 ON product_parameters(product);
+
+CREATE TABLE IF NOT EXISTS product_sources (
+    path TEXT PRIMARY KEY,
+    mtime_ns INTEGER NOT NULL,
+    size INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    imported_at TEXT NOT NULL,
+    parameter_count INTEGER NOT NULL
+);
 """
 
 
@@ -43,6 +52,12 @@ class ParameterStore:
 
     def reset(self) -> None:
         self.conn.execute("DELETE FROM product_parameters")
+        self.conn.execute("DELETE FROM product_sources")
+        self.conn.commit()
+
+    def clear_source(self, source_file: str) -> None:
+        self.conn.execute("DELETE FROM product_parameters WHERE source_file = ?", (source_file,))
+        self.conn.execute("DELETE FROM product_sources WHERE path = ?", (source_file,))
         self.conn.commit()
 
     def add_parameters(self, parameters: list[ProductParameter]) -> int:
@@ -74,6 +89,23 @@ class ParameterStore:
         )
         self.conn.commit()
         return len(rows)
+
+    def source_fingerprint(self, path: str) -> tuple[int, int, str] | None:
+        cursor = self.conn.execute("SELECT mtime_ns, size, sha256 FROM product_sources WHERE path = ?", (path,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return int(row["mtime_ns"]), int(row["size"]), row["sha256"]
+
+    def mark_source(self, path: str, mtime_ns: int, size: int, sha256: str, imported_at: str, count: int) -> None:
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO product_sources(path, mtime_ns, size, sha256, imported_at, parameter_count)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (path, mtime_ns, size, sha256, imported_at, count),
+        )
+        self.conn.commit()
 
     def products(self) -> list[tuple[str, int]]:
         cursor = self.conn.execute(

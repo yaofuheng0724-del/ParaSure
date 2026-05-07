@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from .llm import OpenAICompatibleClient
@@ -7,6 +8,7 @@ from .memory import SessionMemory
 from .prompts import SYSTEM_PROMPT, user_context_prompt
 from .store import ParameterStore
 from .tools import ToolRegistry, build_default_registry, tool_result_to_content
+from .config import AgentConfig
 
 
 class AgentRuntime:
@@ -18,12 +20,13 @@ class AgentRuntime:
         store: ParameterStore,
         memory: SessionMemory,
         artifact_dir: Path,
+        config: AgentConfig,
         max_tool_rounds: int = 12,
     ) -> None:
         self.llm = llm
         self.store = store
         self.memory = memory
-        self.registry: ToolRegistry = build_default_registry(store, artifact_dir)
+        self.registry: ToolRegistry = build_default_registry(store, artifact_dir, config)
         self.max_tool_rounds = max_tool_rounds
 
     def run_turn(self, user_input: str) -> str:

@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from .agent import AgentRuntime
+from .bootstrap import auto_index_product_params
 from .config import AgentConfig, DEFAULT_CONFIG_PATH
 from .excel_io import iter_excel_files, load_product_parameters
 from .llm import OpenAICompatibleClient
@@ -81,8 +82,19 @@ def ingest_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _auto_index(store: ParameterStore, config: AgentConfig) -> None:
+    status = auto_index_product_params(store, config.product_params_path())
+    if status.get("missing"):
+        print_line(f"内置参数目录不存在: {status['params_dir']}")
+        return
+    if status["indexed"] > 0:
+        print_line(f"已自动索引参数目录: {status['indexed']} 个文件, {status['parameter_count']} 条参数")
+
+
 def products_command(args: argparse.Namespace) -> int:
+    config = AgentConfig.load(args.config)
     store = ParameterStore(args.db)
+    _auto_index(store, config)
     rows = store.products()
     if not rows:
         print_line("知识库为空，请先运行 ingest。")
@@ -93,7 +105,9 @@ def products_command(args: argparse.Namespace) -> int:
 
 
 def check_command(args: argparse.Namespace) -> int:
+    config = AgentConfig.load(args.config)
     store = ParameterStore(args.db)
+    _auto_index(store, config)
     verification = VerificationConfig(
         enabled=bool(args.web_url),
         cdp_url=args.cdp_url,
@@ -131,16 +145,19 @@ def chat_command(args: argparse.Namespace) -> int:
     print_line("自然语言示例: 帮我核验 ./客户参数.xlsx，产品选择 慧鉴-智能源代码审计产品，输出 result.xlsx")
     parser = build_parser()
     runtime: AgentRuntime | None = None
+    config = AgentConfig.load(args.config)
+    store = ParameterStore(args.db)
+    _auto_index(store, config)
     if not args.no_llm:
         try:
-            config = AgentConfig.load(args.config)
             llm = OpenAICompatibleClient(config)
             memory = SessionMemory(session_id=args.session_id) if args.session_id else SessionMemory()
             runtime = AgentRuntime(
                 llm=llm,
-                store=ParameterStore(args.db),
+                store=store,
                 memory=memory,
                 artifact_dir=DEFAULT_ARTIFACTS,
+                config=config,
                 max_tool_rounds=config.max_tool_rounds,
             )
             print_line(f"LLM已连接: model={config.model}, base_url={config.base_url}")
@@ -189,20 +206,33 @@ def config_command(args: argparse.Namespace) -> int:
         print_line(f"model: {config.model}")
         print_line(f"temperature: {config.temperature}")
         print_line(f"max_tool_rounds: {config.max_tool_rounds}")
+        print_line(f"product_params_dir: {config.product_params_dir}")
+        print_line(f"chrome.cdp_url: {config.cdp_url()}")
         print_line(f"path: {args.config}")
         return 0
     if not args.key or args.value is None:
         print_line("用法: paramsure config set <key> <value>")
-        return 1
-    if args.key not in AgentConfig.__dataclass_fields__:
-        print_line(f"未知配置项: {args.key}")
         return 1
     value: object = args.value
     if args.key == "temperature":
         value = float(args.value)
     if args.key == "max_tool_rounds":
         value = int(args.value)
-    setattr(config, args.key, value)
+    if "." in args.key:
+        head, tail = args.key.split(".", 1)
+        if head not in AgentConfig.__dataclass_fields__:
+            print_line(f"未知配置项: {args.key}")
+            return 1
+        container = getattr(config, head)
+        if not isinstance(container, dict):
+            print_line(f"配置项不支持嵌套写入: {head}")
+            return 1
+        container[tail] = value
+    else:
+        if args.key not in AgentConfig.__dataclass_fields__:
+            print_line(f"未知配置项: {args.key}")
+            return 1
+        setattr(config, args.key, value)
     config.save(args.config)
     print_line(f"已更新配置: {args.key}")
     return 0

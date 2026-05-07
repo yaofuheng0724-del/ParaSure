@@ -15,6 +15,7 @@ def test_config_roundtrip(tmp_path: Path) -> None:
     assert loaded.api_key == "secret"
     assert loaded.model == "demo-model"
     assert loaded.temperature == 0.2
+    assert loaded.product_params_dir == "data/product_params"
 
 
 def test_session_memory_writes_jsonl(tmp_path: Path) -> None:

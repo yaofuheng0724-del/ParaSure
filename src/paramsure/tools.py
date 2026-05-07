@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from .config import AgentConfig
 from .excel_io import load_tender_requirements, write_results
 from .models import ComplianceResult, EvidenceSource, TenderRequirement, Verdict, VerificationConfig
 from .pipeline import ParaSurePipeline
@@ -63,8 +64,9 @@ def object_schema(properties: dict[str, Any], required: list[str] | None = None)
     }
 
 
-def build_default_registry(store: ParameterStore, artifact_dir: Path) -> ToolRegistry:
+def build_default_registry(store: ParameterStore, artifact_dir: Path, config: AgentConfig | None = None) -> ToolRegistry:
     registry = ToolRegistry()
+    agent_config = config or AgentConfig.load()
 
     def list_products(_: dict[str, Any]) -> dict[str, Any]:
         return {"products": [{"name": name, "count": count} for name, count in store.products()]}
@@ -108,23 +110,28 @@ def build_default_registry(store: ParameterStore, artifact_dir: Path) -> ToolReg
         }
 
     def verify_web_readonly(args: dict[str, Any]) -> dict[str, Any]:
-        config = VerificationConfig(
+        product = args.get("product", "")
+        web_url = args.get("web_url") or (agent_config.web_url_for(product) if product else "")
+        cdp_url = args.get("cdp_url") or agent_config.cdp_url()
+        verification_config = VerificationConfig(
             enabled=True,
-            cdp_url=args.get("cdp_url", ""),
+            cdp_url=cdp_url,
             browser_state=Path(args["browser_state"]) if args.get("browser_state") else None,
-            base_url=args["web_url"],
+            base_url=web_url,
         )
         requirement = TenderRequirement(
             requirement_id=str(args.get("requirement_id", "manual")),
             title="",
             description=args["requirement_text"],
         )
-        outcome = WebVerifier(config, artifact_dir).verify(requirement)
+        outcome = WebVerifier(verification_config, artifact_dir).verify(requirement)
         return {
             "confirmed": outcome.confirmed,
             "confidence": outcome.confidence,
             "summary": outcome.summary,
             "artifact": outcome.artifact,
+            "web_url": web_url,
+            "cdp_url": cdp_url,
         }
 
     def verify_api_readonly(args: dict[str, Any]) -> dict[str, Any]:
@@ -237,11 +244,12 @@ def build_default_registry(store: ParameterStore, artifact_dir: Path) -> ToolReg
                 {
                     "requirement_text": {"type": "string"},
                     "requirement_id": {"type": "string"},
+                    "product": {"type": "string", "description": "可选。提供产品名时可自动从配置查找对应 web_url。"},
                     "web_url": {"type": "string"},
                     "cdp_url": {"type": "string"},
                     "browser_state": {"type": "string"},
                 },
-                ["requirement_text", "web_url"],
+                ["requirement_text"],
             ),
             verify_web_readonly,
         )

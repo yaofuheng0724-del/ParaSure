@@ -5,4 +5,5 @@
 __pycache__/
 *.pyc
 *.xlsx
+!data/product_params/*.xlsx
 !README.md
