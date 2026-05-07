@@ -1,0 +1,8 @@
+.DS_Store
+.pytest_cache/
+.venv/
+.paramsure/
+__pycache__/
+*.pyc
+*.xlsx
+!README.md

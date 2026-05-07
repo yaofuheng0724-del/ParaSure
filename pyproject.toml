@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paramsure"
+version = "0.1.0"
+description = "ParaSure: a tender parameter compliance verification agent for Chaitin products."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openpyxl>=3.1.0",
+]
+
+[project.optional-dependencies]
+web = ["playwright>=1.40.0"]
+dev = ["pytest>=8.0.0"]
+
+[project.scripts]
+paramsure = "paramsure.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
