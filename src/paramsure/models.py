@@ -20,6 +20,12 @@ class EvidenceSource(str, Enum):
     NONE = "无"
 
 
+class VerificationNeed(str, Enum):
+    NOT_NEEDED = "无需二次验证"
+    RECOMMENDED = "建议二次验证"
+    REQUIRED = "需要二次验证"
+
+
 @dataclass(frozen=True)
 class ProductParameter:
     product: str
@@ -60,6 +66,37 @@ class MatchCandidate:
     parameter: ProductParameter
     score: float
     matched_terms: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class NaturalLanguageRequirementSet:
+    product: str
+    requirements: list[TenderRequirement]
+    source_text: str
+
+
+@dataclass
+class ProductContext:
+    product: str
+    parameter_count: int
+    modules: list[str] = field(default_factory=list)
+    sample_features: list[str] = field(default_factory=list)
+    summary: str = ""
+
+
+@dataclass
+class VerificationDecision:
+    requirement: TenderRequirement
+    product: str
+    initial_verdict: Verdict
+    confidence: float
+    needs_web_verification: bool
+    verification_need: VerificationNeed
+    reason: str
+    evidence_summary: str = ""
+    evidence_location: str = ""
+    matched_feature: str = ""
+    candidates: list[MatchCandidate] = field(default_factory=list)
 
 
 @dataclass

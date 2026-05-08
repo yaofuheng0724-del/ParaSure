@@ -6,8 +6,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .config import AgentConfig
+from .context import build_product_context
+from .decision import decide_from_candidates
 from .excel_io import load_tender_requirements, write_results
 from .models import ComplianceResult, EvidenceSource, TenderRequirement, Verdict, VerificationConfig
+from .nl_input import parse_natural_language_requirements
 from .pipeline import ParaSurePipeline
 from .retriever import ParameterRetriever
 from .store import ParameterStore
@@ -86,6 +89,30 @@ def build_default_registry(store: ParameterStore, artifact_dir: Path, config: Ag
             ],
         }
 
+    def parse_natural_language(args: dict[str, Any]) -> dict[str, Any]:
+        available_products = [name for name, _ in store.products()]
+        parsed = parse_natural_language_requirements(args["text"], available_products)
+        return {
+            "product": parsed.product,
+            "requirements": [
+                {"requirement_id": req.requirement_id, "text": req.text} for req in parsed.requirements
+            ],
+            "source_text": parsed.source_text,
+            "needs_product_clarification": not bool(parsed.product),
+        }
+
+    def load_product_context(args: dict[str, Any]) -> dict[str, Any]:
+        product = args["product"]
+        parameters = store.by_product(product)
+        context = build_product_context(product, parameters, sample_limit=int(args.get("sample_limit", 30)))
+        return {
+            "product": context.product,
+            "parameter_count": context.parameter_count,
+            "modules": context.modules,
+            "sample_features": context.sample_features,
+            "summary": context.summary,
+        }
+
     def search_product_parameters(args: dict[str, Any]) -> dict[str, Any]:
         parameters = store.by_product(args["product"])
         requirement = TenderRequirement(
@@ -108,6 +135,35 @@ def build_default_registry(store: ParameterStore, artifact_dir: Path, config: Ag
                 for candidate in candidates
             ]
         }
+
+    def initial_material_assessment(args: dict[str, Any]) -> dict[str, Any]:
+        product = args["product"]
+        parameters = store.by_product(product)
+        retriever = ParameterRetriever(parameters)
+        decisions = []
+        for index, item in enumerate(args["requirements"], start=1):
+            req = TenderRequirement(
+                requirement_id=str(item.get("requirement_id") or index),
+                title="",
+                description=item["text"],
+            )
+            candidates = retriever.search(req, limit=int(args.get("limit", 5)))
+            decision = decide_from_candidates(req, product, candidates)
+            decisions.append(
+                {
+                    "requirement_id": req.requirement_id,
+                    "requirement_text": req.text,
+                    "initial_verdict": decision.initial_verdict.value,
+                    "confidence": round(decision.confidence, 4),
+                    "needs_web_verification": decision.needs_web_verification,
+                    "verification_need": decision.verification_need.value,
+                    "reason": decision.reason,
+                    "matched_feature": decision.matched_feature,
+                    "evidence_summary": decision.evidence_summary,
+                    "evidence_location": decision.evidence_location,
+                }
+            )
+        return {"product": product, "decisions": decisions}
 
     def verify_web_readonly(args: dict[str, Any]) -> dict[str, Any]:
         product = args.get("product", "")
@@ -222,6 +278,33 @@ def build_default_registry(store: ParameterStore, artifact_dir: Path, config: Ag
     )
     registry.register(
         ToolSpec(
+            "parse_natural_language_requirements",
+            "从用户自然语言中解析目标产品和少量参数需求。适合2-3条参数的对话式核验。",
+            object_schema(
+                {
+                    "text": {"type": "string", "description": "用户自然语言核验请求。"},
+                },
+                ["text"],
+            ),
+            parse_natural_language,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            "load_product_context",
+            "只加载目标产品的产品级上下文包，避免把全产品库暴露给LLM。",
+            object_schema(
+                {
+                    "product": {"type": "string"},
+                    "sample_limit": {"type": "integer", "default": 30},
+                },
+                ["product"],
+            ),
+            load_product_context,
+        )
+    )
+    registry.register(
+        ToolSpec(
             "search_product_parameters",
             "在指定产品的参数知识库中检索与客户需求相近的功能参数证据。",
             object_schema(
@@ -234,6 +317,31 @@ def build_default_registry(store: ParameterStore, artifact_dir: Path, config: Ag
                 ["product", "requirement_text"],
             ),
             search_product_parameters,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            "initial_material_assessment",
+            "对一组需求只基于目标产品招标参数库做第一阶段核验，并判断是否建议Web/API二次验证。",
+            object_schema(
+                {
+                    "product": {"type": "string"},
+                    "requirements": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "requirement_id": {"type": "string"},
+                                "text": {"type": "string"},
+                            },
+                            "required": ["text"],
+                        },
+                    },
+                    "limit": {"type": "integer", "default": 5},
+                },
+                ["product", "requirements"],
+            ),
+            initial_material_assessment,
         )
     )
     registry.register(

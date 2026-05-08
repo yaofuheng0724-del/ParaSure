@@ -14,6 +14,7 @@ from .memory import SessionMemory
 from .models import Verdict, VerificationConfig
 from .pipeline import ParaSurePipeline
 from .store import ParameterStore
+from .workflow import V2Workflow
 
 
 DEFAULT_DB = Path(".paramsure/paramsure.db")
@@ -140,14 +141,15 @@ def check_command(args: argparse.Namespace) -> int:
 
 
 def chat_command(args: argparse.Namespace) -> int:
-    print_line("ParaSure Agent 交互模式")
+    print_line("ParaSureV2 Agent 交互模式")
     print_line("可用斜杠命令: /config show, /config set <key> <value>, /ingest <目录或Excel> [--reset], /products, /check <Excel> --product <产品名> --out <结果.xlsx>, /exit")
-    print_line("自然语言示例: 帮我核验 ./客户参数.xlsx，产品选择 慧鉴-智能源代码审计产品，输出 result.xlsx")
+    print_line("自然语言示例: 用户登录支持对接SSO、至少支持CAS/OIDC之一，这条参数雷池是否支持")
     parser = build_parser()
     runtime: AgentRuntime | None = None
     config = AgentConfig.load(args.config)
     store = ParameterStore(args.db)
     _auto_index(store, config)
+    workflow = V2Workflow(store, config, DEFAULT_ARTIFACTS)
     if not args.no_llm:
         try:
             llm = OpenAICompatibleClient(config)
@@ -187,14 +189,43 @@ def chat_command(args: argparse.Namespace) -> int:
             except Exception as exc:  # noqa: BLE001
                 print_line(f"执行失败: {exc}")
             continue
-        if runtime is None:
-            print_line("LLM Agent 未连接。请先运行 /config set api_key <key>，必要时设置 /config set base_url <url>。")
-            continue
         try:
+            handled = _handle_v2_natural_language(raw, workflow)
+            if handled:
+                continue
+            if runtime is None:
+                print_line("LLM Agent 未连接。请先运行 /config set api_key <key>，必要时设置 /config set base_url <url>。")
+                continue
             answer = runtime.run_turn(raw)
             print_line(answer)
         except Exception as exc:  # noqa: BLE001
             print_line(f"Agent执行失败: {exc}")
+
+
+def _handle_v2_natural_language(raw: str, workflow: V2Workflow) -> bool:
+    report = workflow.assess_natural_language(raw)
+    if report.needs_clarification:
+        return False
+    if not report.decisions:
+        return False
+    print_line(workflow.render_assessment(report))
+    prompt = workflow.prompt_for_verification(report)
+    if not prompt:
+        return True
+    print_line(prompt)
+    choice = input("paramsure verify> ").strip().lower()
+    if choice not in {"y", "yes", "是", "确认"}:
+        print_line("已跳过 Web/API 二次验证。")
+        return True
+    web_url = input("请输入本次产品演示环境 URL: ").strip()
+    if not web_url:
+        print_line("未输入演示环境 URL，已取消二次验证。")
+        return True
+    results = workflow.verify_pending(report, web_url)
+    print_line("第二阶段 Web/API 验证结果：")
+    for result in results:
+        print_line(f"- [{result.initial_verdict.value}] {result.requirement.text} | {result.reason}")
+    return True
 
 
 def config_command(args: argparse.Namespace) -> int:
