@@ -8,4 +8,35 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-PYTHONPATH=src exec python3 -m paramsure.cli "$@"
+if ! python3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >/dev/null 2>&1; then
+  echo "当前 python3 版本过低，请安装 Python 3.10+。"
+  exit 1
+fi
+
+VENV_DIR=".venv"
+PYTHON="$VENV_DIR/bin/python"
+
+install_deps() {
+  echo "正在安装 ParaSure 依赖..."
+  if ! "$PYTHON" -m pip install -e .; then
+    echo "依赖安装失败。"
+    echo "请确认当前机器可以访问 Python 包源，或配置内网 PyPI 镜像后重试。"
+    exit 1
+  fi
+}
+
+if [ ! -x "$PYTHON" ]; then
+  echo "未找到仓库内 Python 虚拟环境，正在创建 .venv..."
+  if ! python3 -m venv "$VENV_DIR"; then
+    echo "创建 .venv 失败。"
+    echo "请确认已安装 Python venv 模块；Ubuntu/Debian 可尝试: apt install python3-venv"
+    exit 1
+  fi
+  install_deps
+fi
+
+if ! "$PYTHON" -c "import openpyxl" >/dev/null 2>&1; then
+  install_deps
+fi
+
+exec "$PYTHON" -m paramsure.cli "$@"

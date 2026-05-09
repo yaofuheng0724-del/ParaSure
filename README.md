@@ -20,11 +20,28 @@ ParaSureV2 是一个用于确认长亭产品参数是否满足客户招标参数
 ## 安装
 
 ```bash
-cd /Users/yaofuheng/chaitin/Develop/Paramsure/ParaSureV2
+cd /path/to/ParaSure
 ./paramsure config show
 ```
 
-`venv` 和 `.venv` 是 Python 虚拟环境机制。为了避免你先理解这些概念，当前版本已经提供仓库内启动脚本 `./paramsure`，只要机器上有 `python3` 就可以先直接运行。
+`venv` 和 `.venv` 是 Python 虚拟环境机制。当前版本已经提供仓库内启动脚本 `./paramsure`：
+
+- 第一次运行会自动创建 `.venv`。
+- 第一次运行会自动执行 `pip install -e .` 安装基础依赖，例如 `openpyxl`。
+- 后续运行会复用 `.venv`。
+
+Linux 服务器需要先具备 Python 3.10+、`python3-venv`，并且首次安装依赖时可以访问 Python 包源。Ubuntu/Debian 可先安装：
+
+```bash
+apt install python3 python3-venv
+```
+
+如果自动安装依赖失败，也可以手动执行：
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -e .
+```
 
 第一次运行会自动生成 `.paramsure/config.json`。你可以直接编辑这个文件，或者用命令写入。
 
@@ -39,8 +56,8 @@ cd /Users/yaofuheng/chaitin/Develop/Paramsure/ParaSureV2
 如需 Web 验证：
 
 ```bash
-pip install -e '.[web]'
-playwright install chromium
+.venv/bin/python -m pip install -e '.[web]'
+.venv/bin/python -m playwright install chromium
 ```
 
 ## 快速开始
