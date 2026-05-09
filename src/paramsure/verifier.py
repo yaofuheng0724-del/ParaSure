@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
 from urllib import request
 
@@ -46,9 +47,15 @@ class WebVerifier:
         if not self.config.enabled:
             return VerificationOutcome(False, 0.0, "未启用Web验证")
         try:
-            from playwright.sync_api import sync_playwright
+            playwright = import_module("playwright.sync_api")
         except Exception:
-            return VerificationOutcome(False, 0.0, "未安装playwright，已跳过Web验证")
+            return VerificationOutcome(
+                False,
+                0.0,
+                "ParaSure 的 .venv 未安装 playwright。请运行 ./paramsure 让依赖自动安装，或执行 .venv/bin/python -m pip install -e .",
+            )
+        sync_playwright = playwright.sync_playwright
+        playwright_error = getattr(playwright, "Error", Exception)
 
         if not self.config.base_url:
             return VerificationOutcome(False, 0.0, "未配置产品Web地址")
@@ -81,5 +88,14 @@ class WebVerifier:
                     str(screenshot),
                 )
             return VerificationOutcome(False, 0.0, "Web页面未命中关键功能词", str(screenshot))
+        except playwright_error as exc:
+            message = str(exc)
+            if "Executable doesn't exist" in message or "playwright install" in message:
+                return VerificationOutcome(
+                    False,
+                    0.0,
+                    "Playwright 浏览器未安装。请执行 .venv/bin/python -m playwright install chromium 后重试。",
+                )
+            return VerificationOutcome(False, 0.0, f"Web验证失败: {exc}")
         except Exception as exc:  # noqa: BLE001
             return VerificationOutcome(False, 0.0, f"Web验证失败: {exc}")

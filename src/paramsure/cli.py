@@ -25,6 +25,14 @@ def print_line(message: str = "") -> None:
     print(message, flush=True)
 
 
+def read_prompt(prompt_text: str) -> str:
+    try:
+        from prompt_toolkit import prompt
+    except Exception:
+        return input(prompt_text)
+    return prompt(prompt_text)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="paramsure",
@@ -59,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     config = sub.add_parser("config", help="查看或修改LLM配置")
     config.add_argument("action", choices=["show", "set"], help="配置动作")
-    config.add_argument("key", nargs="?", help="配置项: base_url/api_key/model/temperature/max_tool_rounds")
+    config.add_argument("key", nargs="?", help="配置项: base_url/api_key/model/temperature/max_tool_rounds/ssl.ca_file")
     config.add_argument("value", nargs="?", help="配置值")
     return parser
 
@@ -169,7 +177,7 @@ def chat_command(args: argparse.Namespace) -> int:
             print_line("你仍可使用斜杠命令；配置完成后重新进入 chat。")
     while True:
         try:
-            raw = input("paramsure> ").strip()
+            raw = read_prompt("paramsure> ").strip()
         except (EOFError, KeyboardInterrupt):
             print_line()
             return 0
@@ -213,11 +221,11 @@ def _handle_v2_natural_language(raw: str, workflow: V2Workflow) -> bool:
     if not prompt:
         return True
     print_line(prompt)
-    choice = input("paramsure verify> ").strip().lower()
+    choice = read_prompt("paramsure verify> ").strip().lower()
     if choice not in {"y", "yes", "是", "确认"}:
         print_line("已跳过 Web/API 二次验证。")
         return True
-    web_url = input("请输入本次产品演示环境 URL: ").strip()
+    web_url = read_prompt("请输入本次产品演示环境 URL: ").strip()
     if not web_url:
         print_line("未输入演示环境 URL，已取消二次验证。")
         return True
@@ -239,6 +247,7 @@ def config_command(args: argparse.Namespace) -> int:
         print_line(f"max_tool_rounds: {config.max_tool_rounds}")
         print_line(f"product_params_dir: {config.product_params_dir}")
         print_line(f"chrome.cdp_url: {config.cdp_url()}")
+        print_line(f"ssl.ca_file: {config.ssl_ca_file()}")
         print_line(f"path: {args.config}")
         return 0
     if not args.key or args.value is None:

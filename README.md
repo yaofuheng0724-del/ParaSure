@@ -13,7 +13,7 @@ ParaSureV2 是一个用于确认长亭产品参数是否满足客户招标参数
 - 支持少量参数的自然语言输入，不强制要求 Excel。
 - 对资料不足的参数，会先列出待二次验证清单，再请求用户授权。
 - 输出符合性矩阵，包含结论、证据来源、证据摘要、证据位置、风险备注和建议应答口径。
-- 提供只读 Web/API 验证工具层；Web 验证依赖可选的 `playwright`。
+- 提供只读 Web/API 验证工具层；Web 验证使用 `playwright`。
 - 会话记忆持久化到 `.paramsure/sessions/*.jsonl`。
 - 配置文件支持直接编辑 `.paramsure/config.json`。
 
@@ -27,7 +27,7 @@ cd /path/to/ParaSure
 `venv` 和 `.venv` 是 Python 虚拟环境机制。当前版本已经提供仓库内启动脚本 `./paramsure`：
 
 - 第一次运行会自动创建 `.venv`。
-- 第一次运行会自动执行 `pip install -e .` 安装基础依赖，例如 `openpyxl`。
+- 第一次运行会自动执行 `pip install -e .` 安装依赖，例如 `openpyxl`、`prompt_toolkit`、`playwright`。
 - 后续运行会复用 `.venv`。
 
 Linux 服务器需要先具备 Python 3.10+、`python3-venv`，并且首次安装依赖时可以访问 Python 包源。Ubuntu/Debian 可先安装：
@@ -53,12 +53,27 @@ python3 -m venv .venv
 ./paramsure config set model "gpt-4.1-mini"
 ```
 
-如需 Web 验证：
+如果使用内网 HTTPS 网关，例如 `https://aiapi.chaitin.net/v1`，并遇到 `CERTIFICATE_VERIFY_FAILED`，请将内网根证书或网关 CA 证书保存为 PEM 文件后配置：
 
 ```bash
-.venv/bin/python -m pip install -e '.[web]'
+./paramsure config set ssl.ca_file "/path/to/internal-ca.pem"
+```
+
+也可以临时通过环境变量指定：
+
+```bash
+PARAMSURE_SSL_CA_FILE="/path/to/internal-ca.pem" ./paramsure chat
+```
+
+ParaSure 默认不会关闭 HTTPS 证书校验。
+
+如需 Web 验证，仍需为 Playwright 安装一次 Chromium 浏览器二进制：
+
+```bash
 .venv/bin/python -m playwright install chromium
 ```
+
+ParaSure 固定运行在仓库内 `.venv`，只在系统 Python 或其他虚拟环境中安装 `playwright` 不会生效。
 
 ## 快速开始
 

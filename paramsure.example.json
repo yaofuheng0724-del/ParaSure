@@ -8,6 +8,9 @@
   "chrome": {
     "cdp_url": "http://127.0.0.1:9222"
   },
+  "ssl": {
+    "ca_file": ""
+  },
   "environments": {
     "雷池- Web应用防火墙": {
       "web_url": ""

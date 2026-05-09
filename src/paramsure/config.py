@@ -19,6 +19,7 @@ class AgentConfig:
     max_tool_rounds: int = 12
     product_params_dir: str = "data/product_params"
     chrome: dict[str, str] = field(default_factory=lambda: {"cdp_url": "http://127.0.0.1:9222"})
+    ssl: dict[str, str] = field(default_factory=lambda: {"ca_file": ""})
     environments: dict[str, dict[str, str]] = field(default_factory=dict)
 
     @classmethod
@@ -32,6 +33,9 @@ class AgentConfig:
         config.base_url = os.getenv("PARAMSURE_BASE_URL", config.base_url)
         config.api_key = os.getenv("PARAMSURE_API_KEY", os.getenv("OPENAI_API_KEY", config.api_key))
         config.model = os.getenv("PARAMSURE_MODEL", config.model)
+        config.ssl = config.ssl if isinstance(config.ssl, dict) else {"ca_file": ""}
+        config.ssl.setdefault("ca_file", "")
+        config.ssl["ca_file"] = os.getenv("PARAMSURE_SSL_CA_FILE", config.ssl["ca_file"])
         return config
 
     @classmethod
@@ -62,6 +66,9 @@ class AgentConfig:
 
     def cdp_url(self) -> str:
         return self.chrome.get("cdp_url", "") if isinstance(self.chrome, dict) else ""
+
+    def ssl_ca_file(self) -> str:
+        return self.ssl.get("ca_file", "") if isinstance(self.ssl, dict) else ""
 
     def web_url_for(self, product: str) -> str:
         if not isinstance(self.environments, dict):

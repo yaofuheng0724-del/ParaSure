@@ -35,7 +35,7 @@ if [ ! -x "$PYTHON" ]; then
   install_deps
 fi
 
-if ! "$PYTHON" -c "import openpyxl" >/dev/null 2>&1; then
+if ! "$PYTHON" -c "import openpyxl, playwright, prompt_toolkit" >/dev/null 2>&1; then
   install_deps
 fi
 
