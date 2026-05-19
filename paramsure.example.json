@@ -5,6 +5,7 @@
   "temperature": 0.1,
   "max_tool_rounds": 12,
   "product_params_dir": "data/product_params",
+  "web_playbooks_dir": "data/web_playbooks",
   "chrome": {
     "cdp_url": "http://127.0.0.1:9222"
   },

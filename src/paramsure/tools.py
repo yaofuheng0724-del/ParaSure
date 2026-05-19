@@ -174,18 +174,20 @@ def build_default_registry(store: ParameterStore, artifact_dir: Path, config: Ag
             cdp_url=cdp_url,
             browser_state=Path(args["browser_state"]) if args.get("browser_state") else None,
             base_url=web_url,
+            playbook_dir=str(agent_config.web_playbooks_path()),
         )
         requirement = TenderRequirement(
             requirement_id=str(args.get("requirement_id", "manual")),
             title="",
             description=args["requirement_text"],
         )
-        outcome = WebVerifier(verification_config, artifact_dir).verify(requirement)
+        outcome = WebVerifier(verification_config, artifact_dir, product=product).verify(requirement)
         return {
             "confirmed": outcome.confirmed,
             "confidence": outcome.confidence,
             "summary": outcome.summary,
             "artifact": outcome.artifact,
+            "evidence_path": outcome.evidence_path,
             "web_url": web_url,
             "cdp_url": cdp_url,
         }
@@ -212,6 +214,7 @@ def build_default_registry(store: ParameterStore, artifact_dir: Path, config: Ag
             base_url=args.get("web_url", ""),
             api_base_url=args.get("api_base_url", ""),
             api_token=args.get("api_token", ""),
+            playbook_dir=str(agent_config.web_playbooks_path()),
         )
         results = ParaSurePipeline(store, artifact_dir).evaluate_excel(
             Path(args["tender_file"]),
@@ -246,6 +249,7 @@ def build_default_registry(store: ParameterStore, artifact_dir: Path, config: Ag
                     evidence_summary=item.get("evidence_summary", ""),
                     evidence_location=item.get("evidence_location", ""),
                     web_artifact=item.get("web_artifact", ""),
+                    web_evidence=item.get("web_evidence", ""),
                     api_summary=item.get("api_summary", ""),
                     risk_note=item.get("risk_note", ""),
                     response_suggestion=item.get("response_suggestion", ""),

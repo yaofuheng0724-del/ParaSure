@@ -107,8 +107,9 @@ class V2Workflow:
             enabled=True,
             base_url=web_url,
             cdp_url=self.config.cdp_url(),
+            playbook_dir=str(self.config.web_playbooks_path()),
         )
-        verifier = WebVerifier(verification_config, self.artifact_dir)
+        verifier = WebVerifier(verification_config, self.artifact_dir, product=report.product)
         verified: list[VerificationDecision] = []
         for decision in report.pending_verifications:
             outcome = verifier.verify(decision.requirement)

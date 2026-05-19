@@ -124,6 +124,7 @@ def check_command(args: argparse.Namespace) -> int:
         base_url=args.web_url,
         api_base_url=args.api_base_url,
         api_token=args.api_token,
+        playbook_dir=str(config.web_playbooks_path()),
     )
     agent = ParaSurePipeline(store, DEFAULT_ARTIFACTS)
     print_line("ParaSure 正在核验...")
@@ -246,6 +247,7 @@ def config_command(args: argparse.Namespace) -> int:
         print_line(f"temperature: {config.temperature}")
         print_line(f"max_tool_rounds: {config.max_tool_rounds}")
         print_line(f"product_params_dir: {config.product_params_dir}")
+        print_line(f"web_playbooks_dir: {config.web_playbooks_dir}")
         print_line(f"chrome.cdp_url: {config.cdp_url()}")
         print_line(f"ssl.ca_file: {config.ssl_ca_file()}")
         print_line(f"path: {args.config}")

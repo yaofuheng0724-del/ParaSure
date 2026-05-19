@@ -108,6 +108,31 @@ class VerificationConfig:
     search_hint: str = ""
     api_base_url: str = ""
     api_token: str = ""
+    playbook_dir: str = "data/web_playbooks"
+    max_steps: int = 12
+    evidence_dir: str = ""
+    readonly_blocklist: tuple[str, ...] = (
+        "保存",
+        "删除",
+        "新增",
+        "提交",
+        "启用",
+        "禁用",
+        "下发",
+        "发布",
+        "重启",
+        "清空",
+        "导入",
+        "上传",
+        "save",
+        "delete",
+        "create",
+        "submit",
+        "enable",
+        "disable",
+        "restart",
+        "upload",
+    )
 
 
 @dataclass
@@ -121,6 +146,7 @@ class ComplianceResult:
     evidence_summary: str = ""
     evidence_location: str = ""
     web_artifact: str = ""
+    web_evidence: str = ""
     api_summary: str = ""
     risk_note: str = ""
     response_suggestion: str = ""
