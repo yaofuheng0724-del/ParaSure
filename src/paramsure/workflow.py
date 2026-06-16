@@ -108,6 +108,7 @@ class V2Workflow:
             base_url=web_url,
             cdp_url=self.config.cdp_url(),
             playbook_dir=str(self.config.web_playbooks_path()),
+            web_tests_dir=str(self.config.web_tests_path()),
         )
         verifier = WebVerifier(verification_config, self.artifact_dir, product=report.product)
         verified: list[VerificationDecision] = []

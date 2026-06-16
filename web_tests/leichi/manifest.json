@@ -1,0 +1,41 @@
+{
+  "product": "雷池- Web应用防火墙",
+  "slug": "leichi",
+  "aliases": ["雷池", "WAF", "web应用防火墙", "web 应用防火墙"],
+  "readonly_blocklist": [
+    "保存",
+    "删除",
+    "新增",
+    "提交",
+    "启用",
+    "禁用",
+    "下发",
+    "发布",
+    "重启",
+    "清空",
+    "导入",
+    "上传",
+    "save",
+    "delete",
+    "create",
+    "submit",
+    "enable",
+    "disable",
+    "restart",
+    "upload"
+  ],
+  "scripts": [
+    {
+      "name": "discover",
+      "type": "discover",
+      "path": "discover.py",
+      "capabilities": ["discovery", "dom", "menus", "console"]
+    },
+    {
+      "name": "verify_sso",
+      "type": "verify",
+      "path": "verify_sso.py",
+      "capabilities": ["sso", "oidc", "cas", "单点登录", "认证", "登录"]
+    }
+  ]
+}

@@ -109,6 +109,7 @@ class VerificationConfig:
     api_base_url: str = ""
     api_token: str = ""
     playbook_dir: str = "data/web_playbooks"
+    web_tests_dir: str = "web_tests"
     max_steps: int = 12
     evidence_dir: str = ""
     readonly_blocklist: tuple[str, ...] = (

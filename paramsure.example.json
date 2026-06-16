@@ -6,6 +6,7 @@
   "max_tool_rounds": 12,
   "product_params_dir": "data/product_params",
   "web_playbooks_dir": "data/web_playbooks",
+  "web_tests_dir": "web_tests",
   "chrome": {
     "cdp_url": "http://127.0.0.1:9222"
   },

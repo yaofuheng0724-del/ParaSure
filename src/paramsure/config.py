@@ -19,6 +19,7 @@ class AgentConfig:
     max_tool_rounds: int = 12
     product_params_dir: str = "data/product_params"
     web_playbooks_dir: str = "data/web_playbooks"
+    web_tests_dir: str = "web_tests"
     chrome: dict[str, str] = field(default_factory=lambda: {"cdp_url": "http://127.0.0.1:9222"})
     ssl: dict[str, str] = field(default_factory=lambda: {"ca_file": ""})
     environments: dict[str, dict[str, str]] = field(default_factory=dict)
@@ -67,6 +68,9 @@ class AgentConfig:
 
     def web_playbooks_path(self) -> Path:
         return Path(self.web_playbooks_dir)
+
+    def web_tests_path(self) -> Path:
+        return Path(self.web_tests_dir)
 
     def cdp_url(self) -> str:
         return self.chrome.get("cdp_url", "") if isinstance(self.chrome, dict) else ""

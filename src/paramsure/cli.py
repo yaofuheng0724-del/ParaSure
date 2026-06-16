@@ -11,9 +11,10 @@ from .config import AgentConfig, DEFAULT_CONFIG_PATH
 from .excel_io import iter_excel_files, load_product_parameters
 from .llm import OpenAICompatibleClient
 from .memory import SessionMemory
-from .models import Verdict, VerificationConfig
+from .models import TenderRequirement, Verdict, VerificationConfig
 from .pipeline import ParaSurePipeline
 from .store import ParameterStore
+from .verifier import WebVerifier
 from .workflow import V2Workflow
 
 
@@ -60,6 +61,14 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--browser-state", type=Path, default=None, help="Playwright storage_state JSON")
     check.add_argument("--api-base-url", default="", help="只读API基础地址")
     check.add_argument("--api-token", default="", help="只读API Token")
+
+    web_test = sub.add_parser("web-test", help="运行产品级Playwright只读验证脚本")
+    web_test.add_argument("product", help="产品名称，需匹配 web_tests/<product>/manifest.json")
+    web_test.add_argument("--requirement", required=True, help="待验证的招标参数原文")
+    web_test.add_argument("--requirement-id", default="manual", help="参数ID，默认 manual")
+    web_test.add_argument("--web-url", required=True, help="产品Web环境URL")
+    web_test.add_argument("--cdp-url", default="", help="本地已登录Chrome的CDP地址")
+    web_test.add_argument("--out-dir", type=Path, default=DEFAULT_ARTIFACTS, help="证据输出目录")
 
     chat = sub.add_parser("chat", help="进入Claude Code风格的LLM Agent交互")
     chat.add_argument("--session-id", default="", help="指定会话ID，默认自动生成")
@@ -125,6 +134,7 @@ def check_command(args: argparse.Namespace) -> int:
         api_base_url=args.api_base_url,
         api_token=args.api_token,
         playbook_dir=str(config.web_playbooks_path()),
+        web_tests_dir=str(config.web_tests_path()),
     )
     agent = ParaSurePipeline(store, DEFAULT_ARTIFACTS)
     print_line("ParaSure 正在核验...")
@@ -147,6 +157,35 @@ def check_command(args: argparse.Namespace) -> int:
         print_line(f"- {verdict.value}: {counts.get(verdict, 0)}")
     print_line(f"结果已写入: {args.out}")
     return 0
+
+
+def web_test_command(args: argparse.Namespace) -> int:
+    config = AgentConfig.load(args.config)
+    cdp_url = args.cdp_url or config.cdp_url()
+    verification = VerificationConfig(
+        enabled=True,
+        base_url=args.web_url,
+        cdp_url=cdp_url,
+        playbook_dir=str(config.web_playbooks_path()),
+        web_tests_dir=str(config.web_tests_path()),
+        evidence_dir=str(args.out_dir),
+    )
+    requirement = TenderRequirement(
+        requirement_id=args.requirement_id,
+        title="",
+        description=args.requirement,
+    )
+    outcome = WebVerifier(verification, args.out_dir, product=args.product).verify(requirement)
+    verdict = Verdict.WEB_CONFIRMED if outcome.confirmed else Verdict.UNKNOWN
+    print_line(f"产品：{args.product}")
+    print_line(f"结论：{verdict.value}")
+    print_line(f"置信度：{round(outcome.confidence, 3)}")
+    print_line(f"摘要：{outcome.summary}")
+    if outcome.artifact:
+        print_line(f"截图：{outcome.artifact}")
+    if outcome.evidence_path:
+        print_line(f"证据包：{outcome.evidence_path}")
+    return 0 if outcome.evidence_path else 1
 
 
 def chat_command(args: argparse.Namespace) -> int:
@@ -248,6 +287,7 @@ def config_command(args: argparse.Namespace) -> int:
         print_line(f"max_tool_rounds: {config.max_tool_rounds}")
         print_line(f"product_params_dir: {config.product_params_dir}")
         print_line(f"web_playbooks_dir: {config.web_playbooks_dir}")
+        print_line(f"web_tests_dir: {config.web_tests_dir}")
         print_line(f"chrome.cdp_url: {config.cdp_url()}")
         print_line(f"ssl.ca_file: {config.ssl_ca_file()}")
         print_line(f"path: {args.config}")
@@ -291,6 +331,8 @@ def dispatch(args: argparse.Namespace) -> int:
         return chat_command(args)
     if args.command == "config":
         return config_command(args)
+    if args.command == "web-test":
+        return web_test_command(args)
     raise ValueError(f"未知命令: {args.command}")
 
 

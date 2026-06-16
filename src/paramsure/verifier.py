@@ -11,6 +11,7 @@ from .text import top_terms
 from .web_models import VerificationIntent
 from .web_playbook import WebPlaybook, find_playbook
 from .web_runner import PlaybookWebRunner
+from .web_scripts import WebTestScriptRunner, find_product_web_tests
 
 
 @dataclass
@@ -52,6 +53,18 @@ class PlaybookWebVerifier:
     def verify(self, requirement: TenderRequirement) -> VerificationOutcome:
         if not self.config.enabled:
             return VerificationOutcome(False, 0.0, "未启用Web验证")
+        if not self.config.base_url:
+            return VerificationOutcome(False, 0.0, "未配置产品Web地址")
+        intent = VerificationIntent(
+            product=self.product,
+            requirement_id=requirement.requirement_id,
+            requirement_text=requirement.text,
+            keywords=top_terms(requirement.text, 8),
+            readonly_blocklist=self.config.readonly_blocklist,
+        )
+        scripted = self._verify_with_product_script(intent)
+        if scripted is not None:
+            return scripted
         try:
             playwright = import_module("playwright.sync_api")
         except Exception:
@@ -63,19 +76,25 @@ class PlaybookWebVerifier:
         sync_playwright = playwright.sync_playwright
         playwright_error = getattr(playwright, "Error", Exception)
 
-        if not self.config.base_url:
-            return VerificationOutcome(False, 0.0, "未配置产品Web地址")
-
         playbook = find_playbook(self.product, Path(self.config.playbook_dir)) if self.product else None
         playbook = playbook or _default_playbook(self.product, self.config.readonly_blocklist)
-        intent = VerificationIntent(
-            product=self.product,
-            requirement_id=requirement.requirement_id,
-            requirement_text=requirement.text,
-            keywords=top_terms(requirement.text, 8),
-            readonly_blocklist=self.config.readonly_blocklist,
-        )
         bundle = PlaybookWebRunner(self.config, self.artifact_dir, playwright_module=playwright).run(intent, playbook)
+        judgement = judge_web_evidence(intent, bundle)
+        return VerificationOutcome(
+            confirmed=judgement.verdict == Verdict.WEB_CONFIRMED,
+            confidence=judgement.confidence,
+            summary=f"{judgement.reason} {judgement.evidence_summary}".strip(),
+            artifact=judgement.web_artifact,
+            evidence_path=judgement.evidence_path,
+        )
+
+    def _verify_with_product_script(self, intent: VerificationIntent) -> VerificationOutcome | None:
+        if not self.product:
+            return None
+        manifest = find_product_web_tests(self.product, Path(self.config.web_tests_dir))
+        if manifest is None:
+            return None
+        bundle = WebTestScriptRunner(self.config, self.artifact_dir).run(intent, manifest)
         judgement = judge_web_evidence(intent, bundle)
         return VerificationOutcome(
             confirmed=judgement.verdict == Verdict.WEB_CONFIRMED,

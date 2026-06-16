@@ -175,6 +175,7 @@ def build_default_registry(store: ParameterStore, artifact_dir: Path, config: Ag
             browser_state=Path(args["browser_state"]) if args.get("browser_state") else None,
             base_url=web_url,
             playbook_dir=str(agent_config.web_playbooks_path()),
+            web_tests_dir=str(agent_config.web_tests_path()),
         )
         requirement = TenderRequirement(
             requirement_id=str(args.get("requirement_id", "manual")),
@@ -215,6 +216,7 @@ def build_default_registry(store: ParameterStore, artifact_dir: Path, config: Ag
             api_base_url=args.get("api_base_url", ""),
             api_token=args.get("api_token", ""),
             playbook_dir=str(agent_config.web_playbooks_path()),
+            web_tests_dir=str(agent_config.web_tests_path()),
         )
         results = ParaSurePipeline(store, artifact_dir).evaluate_excel(
             Path(args["tender_file"]),
