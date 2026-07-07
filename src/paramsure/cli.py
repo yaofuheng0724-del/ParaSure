@@ -8,12 +8,16 @@ from pathlib import Path
 from .agent import AgentRuntime
 from .bootstrap import auto_index_product_params
 from .config import AgentConfig, DEFAULT_CONFIG_PATH
+from .diagnostics import run_diagnostics
+from .evidence import summarize_evidence
 from .excel_io import iter_excel_files, load_product_parameters
 from .llm import OpenAICompatibleClient
 from .memory import SessionMemory
-from .models import Verdict, VerificationConfig
+from .models import TenderRequirement, Verdict, VerificationConfig
 from .pipeline import ParaSurePipeline
 from .store import ParameterStore
+from .verifier import WebVerifier
+from .workflow import V2Workflow
 
 
 DEFAULT_DB = Path(".paramsure/paramsure.db")
@@ -22,6 +26,14 @@ DEFAULT_ARTIFACTS = Path(".paramsure/artifacts")
 
 def print_line(message: str = "") -> None:
     print(message, flush=True)
+
+
+def read_prompt(prompt_text: str) -> str:
+    try:
+        from prompt_toolkit import prompt
+    except Exception:
+        return input(prompt_text)
+    return prompt(prompt_text)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -52,14 +64,31 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--api-base-url", default="", help="只读API基础地址")
     check.add_argument("--api-token", default="", help="只读API Token")
 
+    web_test = sub.add_parser("web-test", help="运行产品级Playwright只读验证脚本")
+    web_test.add_argument("product", help="产品名称，需匹配 web_tests/<product>/manifest.json")
+    web_test.add_argument("--requirement", required=True, help="待验证的招标参数原文")
+    web_test.add_argument("--requirement-id", default="manual", help="参数ID，默认 manual")
+    web_test.add_argument("--web-url", required=True, help="产品Web环境URL")
+    web_test.add_argument("--cdp-url", default="", help="本地已登录Chrome的CDP地址")
+    web_test.add_argument("--out-dir", type=Path, default=DEFAULT_ARTIFACTS, help="证据输出目录")
+
     chat = sub.add_parser("chat", help="进入Claude Code风格的LLM Agent交互")
     chat.add_argument("--session-id", default="", help="指定会话ID，默认自动生成")
     chat.add_argument("--no-llm", action="store_true", help="只进入命令模式，不连接LLM")
 
     config = sub.add_parser("config", help="查看或修改LLM配置")
     config.add_argument("action", choices=["show", "set"], help="配置动作")
-    config.add_argument("key", nargs="?", help="配置项: base_url/api_key/model/temperature/max_tool_rounds")
+    config.add_argument("key", nargs="?", help="配置项: base_url/api_key/model/temperature/max_tool_rounds/ssl.ca_file")
     config.add_argument("value", nargs="?", help="配置值")
+
+    doctor = sub.add_parser("doctor", help="检查ParaSure运行环境和证据目录")
+    doctor.add_argument("--artifacts-dir", type=Path, default=DEFAULT_ARTIFACTS, help="证据包目录")
+
+    evidence = sub.add_parser("evidence", help="汇总会话和Web证据包")
+    evidence_sub = evidence.add_subparsers(dest="evidence_command", required=True)
+    summary = evidence_sub.add_parser("summary", help="生成脱敏证据统计摘要")
+    summary.add_argument("--sessions-dir", type=Path, default=Path(".paramsure/sessions"), help="会话JSONL目录")
+    summary.add_argument("--artifacts-dir", type=Path, default=DEFAULT_ARTIFACTS, help="Web证据包目录")
     return parser
 
 
@@ -115,6 +144,8 @@ def check_command(args: argparse.Namespace) -> int:
         base_url=args.web_url,
         api_base_url=args.api_base_url,
         api_token=args.api_token,
+        playbook_dir=str(config.web_playbooks_path()),
+        web_tests_dir=str(config.web_tests_path()),
     )
     agent = ParaSurePipeline(store, DEFAULT_ARTIFACTS)
     print_line("ParaSure 正在核验...")
@@ -139,15 +170,45 @@ def check_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def web_test_command(args: argparse.Namespace) -> int:
+    config = AgentConfig.load(args.config)
+    cdp_url = args.cdp_url or config.cdp_url()
+    verification = VerificationConfig(
+        enabled=True,
+        base_url=args.web_url,
+        cdp_url=cdp_url,
+        playbook_dir=str(config.web_playbooks_path()),
+        web_tests_dir=str(config.web_tests_path()),
+        evidence_dir=str(args.out_dir),
+    )
+    requirement = TenderRequirement(
+        requirement_id=args.requirement_id,
+        title="",
+        description=args.requirement,
+    )
+    outcome = WebVerifier(verification, args.out_dir, product=args.product).verify(requirement)
+    verdict = Verdict.WEB_CONFIRMED if outcome.confirmed else Verdict.UNKNOWN
+    print_line(f"产品：{args.product}")
+    print_line(f"结论：{verdict.value}")
+    print_line(f"置信度：{round(outcome.confidence, 3)}")
+    print_line(f"摘要：{outcome.summary}")
+    if outcome.artifact:
+        print_line(f"截图：{outcome.artifact}")
+    if outcome.evidence_path:
+        print_line(f"证据包：{outcome.evidence_path}")
+    return 0 if outcome.evidence_path else 1
+
+
 def chat_command(args: argparse.Namespace) -> int:
-    print_line("ParaSure Agent 交互模式")
+    print_line("ParaSureV2 Agent 交互模式")
     print_line("可用斜杠命令: /config show, /config set <key> <value>, /ingest <目录或Excel> [--reset], /products, /check <Excel> --product <产品名> --out <结果.xlsx>, /exit")
-    print_line("自然语言示例: 帮我核验 ./客户参数.xlsx，产品选择 慧鉴-智能源代码审计产品，输出 result.xlsx")
+    print_line("自然语言示例: 用户登录支持对接SSO、至少支持CAS/OIDC之一，这条参数雷池是否支持")
     parser = build_parser()
     runtime: AgentRuntime | None = None
     config = AgentConfig.load(args.config)
     store = ParameterStore(args.db)
     _auto_index(store, config)
+    workflow = V2Workflow(store, config, DEFAULT_ARTIFACTS)
     if not args.no_llm:
         try:
             llm = OpenAICompatibleClient(config)
@@ -167,7 +228,7 @@ def chat_command(args: argparse.Namespace) -> int:
             print_line("你仍可使用斜杠命令；配置完成后重新进入 chat。")
     while True:
         try:
-            raw = input("paramsure> ").strip()
+            raw = read_prompt("paramsure> ").strip()
         except (EOFError, KeyboardInterrupt):
             print_line()
             return 0
@@ -187,14 +248,43 @@ def chat_command(args: argparse.Namespace) -> int:
             except Exception as exc:  # noqa: BLE001
                 print_line(f"执行失败: {exc}")
             continue
-        if runtime is None:
-            print_line("LLM Agent 未连接。请先运行 /config set api_key <key>，必要时设置 /config set base_url <url>。")
-            continue
         try:
+            handled = _handle_v2_natural_language(raw, workflow)
+            if handled:
+                continue
+            if runtime is None:
+                print_line("LLM Agent 未连接。请先运行 /config set api_key <key>，必要时设置 /config set base_url <url>。")
+                continue
             answer = runtime.run_turn(raw)
             print_line(answer)
         except Exception as exc:  # noqa: BLE001
             print_line(f"Agent执行失败: {exc}")
+
+
+def _handle_v2_natural_language(raw: str, workflow: V2Workflow) -> bool:
+    report = workflow.assess_natural_language(raw)
+    if report.needs_clarification:
+        return False
+    if not report.decisions:
+        return False
+    print_line(workflow.render_assessment(report))
+    prompt = workflow.prompt_for_verification(report)
+    if not prompt:
+        return True
+    print_line(prompt)
+    choice = read_prompt("paramsure verify> ").strip().lower()
+    if choice not in {"y", "yes", "是", "确认"}:
+        print_line("已跳过 Web/API 二次验证。")
+        return True
+    web_url = read_prompt("请输入本次产品演示环境 URL: ").strip()
+    if not web_url:
+        print_line("未输入演示环境 URL，已取消二次验证。")
+        return True
+    results = workflow.verify_pending(report, web_url)
+    print_line("第二阶段 Web/API 验证结果：")
+    for result in results:
+        print_line(f"- [{result.initial_verdict.value}] {result.requirement.text} | {result.reason}")
+    return True
 
 
 def config_command(args: argparse.Namespace) -> int:
@@ -207,7 +297,10 @@ def config_command(args: argparse.Namespace) -> int:
         print_line(f"temperature: {config.temperature}")
         print_line(f"max_tool_rounds: {config.max_tool_rounds}")
         print_line(f"product_params_dir: {config.product_params_dir}")
+        print_line(f"web_playbooks_dir: {config.web_playbooks_dir}")
+        print_line(f"web_tests_dir: {config.web_tests_dir}")
         print_line(f"chrome.cdp_url: {config.cdp_url()}")
+        print_line(f"ssl.ca_file: {config.ssl_ca_file()}")
         print_line(f"path: {args.config}")
         return 0
     if not args.key or args.value is None:
@@ -238,6 +331,36 @@ def config_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def doctor_command(args: argparse.Namespace) -> int:
+    config = AgentConfig.load(args.config)
+    checks = run_diagnostics(config, args.artifacts_dir)
+    print_line("ParaSure Doctor")
+    failed = 0
+    for check in checks:
+        status = "OK" if check.ok else "WARN"
+        if not check.ok:
+            failed += 1
+        print_line(f"- {check.name}: {status} | {check.detail}")
+    return 0 if failed == 0 else 1
+
+
+def evidence_command(args: argparse.Namespace) -> int:
+    if args.evidence_command != "summary":
+        raise ValueError(f"未知证据命令: {args.evidence_command}")
+    summary = summarize_evidence(args.sessions_dir, args.artifacts_dir)
+    print_line("ParaSure Evidence Summary")
+    print_line(f"Sessions: {summary.sessions}")
+    print_line(f"Events: {summary.events}")
+    print_line(f"Tool observations: {summary.tool_observations}")
+    print_line(f"Tool failures: {summary.tool_failures}")
+    print_line(f"Evidence bundles: {summary.evidence_bundles}")
+    print_line(f"Screenshots: {summary.screenshots}")
+    print_line(f"Failed bundles: {summary.failed_bundles}")
+    if summary.tool_names:
+        print_line(f"Tools used: {', '.join(summary.tool_names)}")
+    return 0
+
+
 def dispatch(args: argparse.Namespace) -> int:
     if args.command == "ingest":
         return ingest_command(args)
@@ -249,6 +372,12 @@ def dispatch(args: argparse.Namespace) -> int:
         return chat_command(args)
     if args.command == "config":
         return config_command(args)
+    if args.command == "web-test":
+        return web_test_command(args)
+    if args.command == "doctor":
+        return doctor_command(args)
+    if args.command == "evidence":
+        return evidence_command(args)
     raise ValueError(f"未知命令: {args.command}")
 
 

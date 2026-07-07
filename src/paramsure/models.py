@@ -20,6 +20,12 @@ class EvidenceSource(str, Enum):
     NONE = "无"
 
 
+class VerificationNeed(str, Enum):
+    NOT_NEEDED = "无需二次验证"
+    RECOMMENDED = "建议二次验证"
+    REQUIRED = "需要二次验证"
+
+
 @dataclass(frozen=True)
 class ProductParameter:
     product: str
@@ -62,6 +68,37 @@ class MatchCandidate:
     matched_terms: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class NaturalLanguageRequirementSet:
+    product: str
+    requirements: list[TenderRequirement]
+    source_text: str
+
+
+@dataclass
+class ProductContext:
+    product: str
+    parameter_count: int
+    modules: list[str] = field(default_factory=list)
+    sample_features: list[str] = field(default_factory=list)
+    summary: str = ""
+
+
+@dataclass
+class VerificationDecision:
+    requirement: TenderRequirement
+    product: str
+    initial_verdict: Verdict
+    confidence: float
+    needs_web_verification: bool
+    verification_need: VerificationNeed
+    reason: str
+    evidence_summary: str = ""
+    evidence_location: str = ""
+    matched_feature: str = ""
+    candidates: list[MatchCandidate] = field(default_factory=list)
+
+
 @dataclass
 class VerificationConfig:
     enabled: bool = False
@@ -71,6 +108,32 @@ class VerificationConfig:
     search_hint: str = ""
     api_base_url: str = ""
     api_token: str = ""
+    playbook_dir: str = "data/web_playbooks"
+    web_tests_dir: str = "web_tests"
+    max_steps: int = 12
+    evidence_dir: str = ""
+    readonly_blocklist: tuple[str, ...] = (
+        "保存",
+        "删除",
+        "新增",
+        "提交",
+        "启用",
+        "禁用",
+        "下发",
+        "发布",
+        "重启",
+        "清空",
+        "导入",
+        "上传",
+        "save",
+        "delete",
+        "create",
+        "submit",
+        "enable",
+        "disable",
+        "restart",
+        "upload",
+    )
 
 
 @dataclass
@@ -84,6 +147,7 @@ class ComplianceResult:
     evidence_summary: str = ""
     evidence_location: str = ""
     web_artifact: str = ""
+    web_evidence: str = ""
     api_summary: str = ""
     risk_note: str = ""
     response_suggestion: str = ""

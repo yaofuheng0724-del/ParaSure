@@ -1,0 +1,44 @@
+{
+  "product": "雷池- Web应用防火墙",
+  "entry_actions": [
+    {
+      "type": "goto"
+    }
+  ],
+  "search_selectors": [
+    "input[type='search']",
+    "input[placeholder*='搜索']",
+    "input[aria-label*='搜索']"
+  ],
+  "menu_selectors": [
+    "nav",
+    "aside",
+    "[role='navigation']"
+  ],
+  "evidence_rules": {
+    "min_dom_matches": 1
+  },
+  "readonly_blocklist": [
+    "保存",
+    "删除",
+    "新增",
+    "提交",
+    "启用",
+    "禁用",
+    "下发",
+    "发布",
+    "重启",
+    "清空",
+    "导入",
+    "上传",
+    "save",
+    "delete",
+    "create",
+    "submit",
+    "enable",
+    "disable",
+    "restart",
+    "upload"
+  ],
+  "max_excerpt_chars": 1200
+}

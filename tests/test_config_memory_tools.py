@@ -16,6 +16,23 @@ def test_config_roundtrip(tmp_path: Path) -> None:
     assert loaded.model == "demo-model"
     assert loaded.temperature == 0.2
     assert loaded.product_params_dir == "data/product_params"
+    assert loaded.ssl_ca_file() == ""
+
+
+def test_config_ssl_ca_file_roundtrip(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    config = AgentConfig(ssl={"ca_file": "/tmp/internal-ca.pem"})
+    config.save(path)
+    loaded = AgentConfig.load(path)
+    assert loaded.ssl_ca_file() == "/tmp/internal-ca.pem"
+
+
+def test_config_ssl_ca_file_env_override(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "config.json"
+    AgentConfig(ssl={"ca_file": "/tmp/config-ca.pem"}).save(path)
+    monkeypatch.setenv("PARAMSURE_SSL_CA_FILE", "/tmp/env-ca.pem")
+    loaded = AgentConfig.load(path)
+    assert loaded.ssl_ca_file() == "/tmp/env-ca.pem"
 
 
 def test_session_memory_writes_jsonl(tmp_path: Path) -> None:
@@ -33,4 +50,20 @@ def test_tool_registry_lists_products(tmp_path: Path) -> None:
     registry = build_default_registry(store, tmp_path / "artifacts")
     result = registry.call("list_products", {})
     assert result["ok"] is True
+    assert "duration_ms" in result
+    assert result["duration_ms"] >= 0
+    assert result["error_type"] == ""
+    assert result["retry_count"] == 0
     assert "products" in result["result"]
+
+
+def test_tool_registry_reports_error_type_and_duration(tmp_path: Path) -> None:
+    store = ParameterStore(tmp_path / "db.sqlite")
+    registry = build_default_registry(store, tmp_path / "artifacts")
+
+    result = registry.call("missing_tool", {})
+
+    assert result["ok"] is False
+    assert result["error_type"] == "UnknownTool"
+    assert result["duration_ms"] >= 0
+    assert result["retry_count"] == 0

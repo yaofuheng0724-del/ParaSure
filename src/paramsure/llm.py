@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import ssl
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .config import AgentConfig
@@ -49,12 +51,19 @@ class OpenAICompatibleClient:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urllib.request.urlopen(req, timeout=60, context=self._ssl_context()) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="ignore")
             raise RuntimeError(f"LLM 请求失败: HTTP {exc.code}: {body[:1000]}") from exc
         except urllib.error.URLError as exc:
+            if _is_certificate_error(exc):
+                raise RuntimeError(
+                    "LLM 请求失败: SSL 证书校验失败。"
+                    "如果使用内网 HTTPS 网关，请运行 "
+                    "`./paramsure config set ssl.ca_file /path/to/internal-ca.pem` "
+                    "或设置 PARAMSURE_SSL_CA_FILE 指向可信 CA 证书。"
+                ) from exc
             raise RuntimeError(f"LLM 请求失败: {exc}") from exc
 
         choices = data.get("choices") or []
@@ -66,6 +75,15 @@ class OpenAICompatibleClient:
             tool_calls=self._parse_tool_calls(message),
             raw_message=message,
         )
+
+    def _ssl_context(self) -> ssl.SSLContext | None:
+        ca_file = self.config.ssl_ca_file()
+        if not ca_file:
+            return None
+        path = Path(ca_file).expanduser()
+        if not path.is_file():
+            raise RuntimeError(f"LLM SSL CA 证书文件不存在: {path}")
+        return ssl.create_default_context(cafile=str(path))
 
     @staticmethod
     def _parse_tool_calls(message: dict[str, Any]) -> list[ToolCall]:
@@ -85,3 +103,12 @@ class OpenAICompatibleClient:
                 )
             )
         return calls
+
+
+def _is_certificate_error(exc: urllib.error.URLError) -> bool:
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return True
+    if isinstance(reason, ssl.SSLError) and "CERTIFICATE_VERIFY_FAILED" in str(reason):
+        return True
+    return "CERTIFICATE_VERIFY_FAILED" in str(exc)

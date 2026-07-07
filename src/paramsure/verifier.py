@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
 from urllib import request
 
-from .models import TenderRequirement, VerificationConfig
+from .evidence_judge import judge_web_evidence
+from .models import TenderRequirement, VerificationConfig, Verdict
 from .text import top_terms
+from .web_models import VerificationIntent
+from .web_playbook import WebPlaybook, find_playbook
+from .web_runner import PlaybookWebRunner
+from .web_scripts import WebTestScriptRunner, find_product_web_tests
 
 
 @dataclass
@@ -14,6 +20,7 @@ class VerificationOutcome:
     confidence: float
     summary: str = ""
     artifact: str = ""
+    evidence_path: str = ""
 
 
 class ApiVerifier:
@@ -37,49 +44,75 @@ class ApiVerifier:
             return VerificationOutcome(False, 0.0, f"API验证失败: {exc}")
 
 
-class WebVerifier:
-    def __init__(self, config: VerificationConfig, artifact_dir: Path):
+class PlaybookWebVerifier:
+    def __init__(self, config: VerificationConfig, artifact_dir: Path, product: str = ""):
         self.config = config
         self.artifact_dir = artifact_dir
+        self.product = product
 
     def verify(self, requirement: TenderRequirement) -> VerificationOutcome:
         if not self.config.enabled:
             return VerificationOutcome(False, 0.0, "未启用Web验证")
-        try:
-            from playwright.sync_api import sync_playwright
-        except Exception:
-            return VerificationOutcome(False, 0.0, "未安装playwright，已跳过Web验证")
-
         if not self.config.base_url:
             return VerificationOutcome(False, 0.0, "未配置产品Web地址")
-
-        self.artifact_dir.mkdir(parents=True, exist_ok=True)
-        screenshot = self.artifact_dir / f"web-check-{requirement.requirement_id}.png"
-        keywords = top_terms(requirement.text, 6)
+        intent = VerificationIntent(
+            product=self.product,
+            requirement_id=requirement.requirement_id,
+            requirement_text=requirement.text,
+            keywords=top_terms(requirement.text, 8),
+            readonly_blocklist=self.config.readonly_blocklist,
+        )
+        scripted = self._verify_with_product_script(intent)
+        if scripted is not None:
+            return scripted
         try:
-            with sync_playwright() as p:
-                if self.config.cdp_url:
-                    browser = p.chromium.connect_over_cdp(self.config.cdp_url)
-                    context = browser.contexts[0] if browser.contexts else browser.new_context()
-                else:
-                    browser = p.chromium.launch(headless=False)
-                    context_args = {}
-                    if self.config.browser_state:
-                        context_args["storage_state"] = str(self.config.browser_state)
-                    context = browser.new_context(**context_args)
-                page = context.new_page()
-                page.goto(self.config.base_url, wait_until="domcontentloaded", timeout=15000)
-                page_text = page.locator("body").inner_text(timeout=8000)
-                page.screenshot(path=str(screenshot), full_page=True)
-                browser.close()
-            matched = [term for term in keywords if term and term in page_text]
-            if matched:
-                return VerificationOutcome(
-                    True,
-                    min(0.65 + 0.03 * len(matched), 0.82),
-                    f"页面文本命中关键词: {', '.join(matched)}",
-                    str(screenshot),
-                )
-            return VerificationOutcome(False, 0.0, "Web页面未命中关键功能词", str(screenshot))
-        except Exception as exc:  # noqa: BLE001
-            return VerificationOutcome(False, 0.0, f"Web验证失败: {exc}")
+            playwright = import_module("playwright.sync_api")
+        except Exception:
+            return VerificationOutcome(
+                False,
+                0.0,
+                "ParaSure 的 .venv 未安装 playwright。请运行 ./paramsure 让依赖自动安装，或执行 .venv/bin/python -m pip install -e .",
+            )
+        sync_playwright = playwright.sync_playwright
+        playwright_error = getattr(playwright, "Error", Exception)
+
+        playbook = find_playbook(self.product, Path(self.config.playbook_dir)) if self.product else None
+        playbook = playbook or _default_playbook(self.product, self.config.readonly_blocklist)
+        bundle = PlaybookWebRunner(self.config, self.artifact_dir, playwright_module=playwright).run(intent, playbook)
+        judgement = judge_web_evidence(intent, bundle)
+        return VerificationOutcome(
+            confirmed=judgement.verdict == Verdict.WEB_CONFIRMED,
+            confidence=judgement.confidence,
+            summary=f"{judgement.reason} {judgement.evidence_summary}".strip(),
+            artifact=judgement.web_artifact,
+            evidence_path=judgement.evidence_path,
+        )
+
+    def _verify_with_product_script(self, intent: VerificationIntent) -> VerificationOutcome | None:
+        if not self.product:
+            return None
+        manifest = find_product_web_tests(self.product, Path(self.config.web_tests_dir))
+        if manifest is None:
+            return None
+        bundle = WebTestScriptRunner(self.config, self.artifact_dir).run(intent, manifest)
+        judgement = judge_web_evidence(intent, bundle)
+        return VerificationOutcome(
+            confirmed=judgement.verdict == Verdict.WEB_CONFIRMED,
+            confidence=judgement.confidence,
+            summary=f"{judgement.reason} {judgement.evidence_summary}".strip(),
+            artifact=judgement.web_artifact,
+            evidence_path=judgement.evidence_path,
+        )
+
+
+class WebVerifier(PlaybookWebVerifier):
+    """Backward-compatible facade for the V3 playbook-based verifier."""
+
+
+def _default_playbook(product: str, readonly_blocklist: tuple[str, ...]) -> WebPlaybook:
+    return WebPlaybook(
+        product=product,
+        entry_actions=({"type": "goto"},),
+        evidence_rules={"min_dom_matches": 1},
+        readonly_blocklist=readonly_blocklist,
+    )

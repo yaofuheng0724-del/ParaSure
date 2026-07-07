@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 from .config import AgentConfig
+from .context import build_product_context
+from .decision import decide_from_candidates
 from .excel_io import load_tender_requirements, write_results
 from .models import ComplianceResult, EvidenceSource, TenderRequirement, Verdict, VerificationConfig
+from .nl_input import parse_natural_language_requirements
 from .pipeline import ParaSurePipeline
 from .retriever import ParameterRetriever
 from .store import ParameterStore
@@ -46,13 +50,36 @@ class ToolRegistry:
         return [tool.openai_schema() for tool in self._tools.values()]
 
     def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        started = time.perf_counter()
         if name not in self._tools:
-            return {"ok": False, "error": f"未知工具: {name}"}
+            return _tool_envelope(
+                started,
+                {"ok": False, "error": f"未知工具: {name}", "error_type": "UnknownTool", "retry_count": 0},
+            )
         try:
             payload = self._tools[name].handler(arguments)
-            return {"ok": True, "tool": name, "result": payload}
+            return _tool_envelope(
+                started,
+                {"ok": True, "tool": name, "result": payload, "error_type": "", "retry_count": 0},
+            )
         except Exception as exc:  # noqa: BLE001 - tool failures are observations.
-            return {"ok": False, "tool": name, "error": str(exc)}
+            return _tool_envelope(
+                started,
+                {
+                    "ok": False,
+                    "tool": name,
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                    "retry_count": 0,
+                },
+            )
+
+
+def _tool_envelope(started: float, result: dict[str, Any]) -> dict[str, Any]:
+    result["duration_ms"] = round((time.perf_counter() - started) * 1000, 3)
+    result.setdefault("error_type", "")
+    result.setdefault("retry_count", 0)
+    return result
 
 
 def object_schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
@@ -86,6 +113,30 @@ def build_default_registry(store: ParameterStore, artifact_dir: Path, config: Ag
             ],
         }
 
+    def parse_natural_language(args: dict[str, Any]) -> dict[str, Any]:
+        available_products = [name for name, _ in store.products()]
+        parsed = parse_natural_language_requirements(args["text"], available_products)
+        return {
+            "product": parsed.product,
+            "requirements": [
+                {"requirement_id": req.requirement_id, "text": req.text} for req in parsed.requirements
+            ],
+            "source_text": parsed.source_text,
+            "needs_product_clarification": not bool(parsed.product),
+        }
+
+    def load_product_context(args: dict[str, Any]) -> dict[str, Any]:
+        product = args["product"]
+        parameters = store.by_product(product)
+        context = build_product_context(product, parameters, sample_limit=int(args.get("sample_limit", 30)))
+        return {
+            "product": context.product,
+            "parameter_count": context.parameter_count,
+            "modules": context.modules,
+            "sample_features": context.sample_features,
+            "summary": context.summary,
+        }
+
     def search_product_parameters(args: dict[str, Any]) -> dict[str, Any]:
         parameters = store.by_product(args["product"])
         requirement = TenderRequirement(
@@ -109,6 +160,35 @@ def build_default_registry(store: ParameterStore, artifact_dir: Path, config: Ag
             ]
         }
 
+    def initial_material_assessment(args: dict[str, Any]) -> dict[str, Any]:
+        product = args["product"]
+        parameters = store.by_product(product)
+        retriever = ParameterRetriever(parameters)
+        decisions = []
+        for index, item in enumerate(args["requirements"], start=1):
+            req = TenderRequirement(
+                requirement_id=str(item.get("requirement_id") or index),
+                title="",
+                description=item["text"],
+            )
+            candidates = retriever.search(req, limit=int(args.get("limit", 5)))
+            decision = decide_from_candidates(req, product, candidates)
+            decisions.append(
+                {
+                    "requirement_id": req.requirement_id,
+                    "requirement_text": req.text,
+                    "initial_verdict": decision.initial_verdict.value,
+                    "confidence": round(decision.confidence, 4),
+                    "needs_web_verification": decision.needs_web_verification,
+                    "verification_need": decision.verification_need.value,
+                    "reason": decision.reason,
+                    "matched_feature": decision.matched_feature,
+                    "evidence_summary": decision.evidence_summary,
+                    "evidence_location": decision.evidence_location,
+                }
+            )
+        return {"product": product, "decisions": decisions}
+
     def verify_web_readonly(args: dict[str, Any]) -> dict[str, Any]:
         product = args.get("product", "")
         web_url = args.get("web_url") or (agent_config.web_url_for(product) if product else "")
@@ -118,18 +198,21 @@ def build_default_registry(store: ParameterStore, artifact_dir: Path, config: Ag
             cdp_url=cdp_url,
             browser_state=Path(args["browser_state"]) if args.get("browser_state") else None,
             base_url=web_url,
+            playbook_dir=str(agent_config.web_playbooks_path()),
+            web_tests_dir=str(agent_config.web_tests_path()),
         )
         requirement = TenderRequirement(
             requirement_id=str(args.get("requirement_id", "manual")),
             title="",
             description=args["requirement_text"],
         )
-        outcome = WebVerifier(verification_config, artifact_dir).verify(requirement)
+        outcome = WebVerifier(verification_config, artifact_dir, product=product).verify(requirement)
         return {
             "confirmed": outcome.confirmed,
             "confidence": outcome.confidence,
             "summary": outcome.summary,
             "artifact": outcome.artifact,
+            "evidence_path": outcome.evidence_path,
             "web_url": web_url,
             "cdp_url": cdp_url,
         }
@@ -156,6 +239,8 @@ def build_default_registry(store: ParameterStore, artifact_dir: Path, config: Ag
             base_url=args.get("web_url", ""),
             api_base_url=args.get("api_base_url", ""),
             api_token=args.get("api_token", ""),
+            playbook_dir=str(agent_config.web_playbooks_path()),
+            web_tests_dir=str(agent_config.web_tests_path()),
         )
         results = ParaSurePipeline(store, artifact_dir).evaluate_excel(
             Path(args["tender_file"]),
@@ -190,6 +275,7 @@ def build_default_registry(store: ParameterStore, artifact_dir: Path, config: Ag
                     evidence_summary=item.get("evidence_summary", ""),
                     evidence_location=item.get("evidence_location", ""),
                     web_artifact=item.get("web_artifact", ""),
+                    web_evidence=item.get("web_evidence", ""),
                     api_summary=item.get("api_summary", ""),
                     risk_note=item.get("risk_note", ""),
                     response_suggestion=item.get("response_suggestion", ""),
@@ -222,6 +308,33 @@ def build_default_registry(store: ParameterStore, artifact_dir: Path, config: Ag
     )
     registry.register(
         ToolSpec(
+            "parse_natural_language_requirements",
+            "从用户自然语言中解析目标产品和少量参数需求。适合2-3条参数的对话式核验。",
+            object_schema(
+                {
+                    "text": {"type": "string", "description": "用户自然语言核验请求。"},
+                },
+                ["text"],
+            ),
+            parse_natural_language,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            "load_product_context",
+            "只加载目标产品的产品级上下文包，避免把全产品库暴露给LLM。",
+            object_schema(
+                {
+                    "product": {"type": "string"},
+                    "sample_limit": {"type": "integer", "default": 30},
+                },
+                ["product"],
+            ),
+            load_product_context,
+        )
+    )
+    registry.register(
+        ToolSpec(
             "search_product_parameters",
             "在指定产品的参数知识库中检索与客户需求相近的功能参数证据。",
             object_schema(
@@ -234,6 +347,31 @@ def build_default_registry(store: ParameterStore, artifact_dir: Path, config: Ag
                 ["product", "requirement_text"],
             ),
             search_product_parameters,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            "initial_material_assessment",
+            "对一组需求只基于目标产品招标参数库做第一阶段核验，并判断是否建议Web/API二次验证。",
+            object_schema(
+                {
+                    "product": {"type": "string"},
+                    "requirements": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "requirement_id": {"type": "string"},
+                                "text": {"type": "string"},
+                            },
+                            "required": ["text"],
+                        },
+                    },
+                    "limit": {"type": "integer", "default": 5},
+                },
+                ["product", "requirements"],
+            ),
+            initial_material_assessment,
         )
     )
     registry.register(

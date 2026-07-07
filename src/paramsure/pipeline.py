@@ -32,7 +32,7 @@ class ParaSurePipeline:
         if not parameters:
             raise ValueError(f"知识库中未找到产品: {product}")
         retriever = ParameterRetriever(parameters)
-        web = WebVerifier(verification, self.artifact_dir)
+        web = WebVerifier(verification, self.artifact_dir, product=product)
         api = ApiVerifier(verification)
 
         results: list[ComplianceResult] = []
@@ -74,9 +74,19 @@ class ParaSurePipeline:
                         evidence_summary=web_result.summary,
                         evidence_location=verification.base_url,
                         web_artifact=web_result.artifact,
+                        web_evidence=web_result.evidence_path,
                         risk_note="Web验证基于页面文本命中，建议在正式应答前补充截图或产品手册证据。",
                         response_suggestion="可响应支持，依据演示环境页面核验结果确认。",
                         candidates=candidates,
+                    )
+                else:
+                    verification_result = self._web_unknown_result(
+                        requirement,
+                        product,
+                        best,
+                        candidates,
+                        verification.base_url,
+                        web_result,
                     )
             if verification_result is not None:
                 results.append(verification_result)
@@ -136,5 +146,33 @@ class ParaSurePipeline:
             evidence_source=EvidenceSource.NONE,
             risk_note="产品参数库和当前验证工具均未找到可支撑证据。",
             response_suggestion="建议标记为待确认，不直接承诺满足。",
+            candidates=candidates,
+        )
+
+    @staticmethod
+    def _web_unknown_result(
+        requirement: TenderRequirement,
+        product: str,
+        best: Any,
+        candidates: Any,
+        web_url: str,
+        web_result: Any,
+    ) -> ComplianceResult:
+        matched_feature = best.parameter.feature if best else ""
+        material_summary = best.parameter.evidence_text[:500] if best else ""
+        evidence_summary = web_result.summary or material_summary
+        return ComplianceResult(
+            requirement=requirement,
+            product=product,
+            verdict=Verdict.UNKNOWN,
+            confidence=web_result.confidence or 0.0,
+            evidence_source=EvidenceSource.WEB,
+            matched_feature=matched_feature,
+            evidence_summary=evidence_summary,
+            evidence_location=web_url,
+            web_artifact=web_result.artifact,
+            web_evidence=web_result.evidence_path,
+            risk_note="已执行Web二次验证，但页面证据不足以确认支持；建议人工复核或补充API/产品手册证据。",
+            response_suggestion="建议暂按未确认响应，补充可审计证据后再承诺支持。",
             candidates=candidates,
         )
