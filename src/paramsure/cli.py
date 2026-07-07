@@ -8,6 +8,8 @@ from pathlib import Path
 from .agent import AgentRuntime
 from .bootstrap import auto_index_product_params
 from .config import AgentConfig, DEFAULT_CONFIG_PATH
+from .diagnostics import run_diagnostics
+from .evidence import summarize_evidence
 from .excel_io import iter_excel_files, load_product_parameters
 from .llm import OpenAICompatibleClient
 from .memory import SessionMemory
@@ -78,6 +80,15 @@ def build_parser() -> argparse.ArgumentParser:
     config.add_argument("action", choices=["show", "set"], help="配置动作")
     config.add_argument("key", nargs="?", help="配置项: base_url/api_key/model/temperature/max_tool_rounds/ssl.ca_file")
     config.add_argument("value", nargs="?", help="配置值")
+
+    doctor = sub.add_parser("doctor", help="检查ParaSure运行环境和证据目录")
+    doctor.add_argument("--artifacts-dir", type=Path, default=DEFAULT_ARTIFACTS, help="证据包目录")
+
+    evidence = sub.add_parser("evidence", help="汇总会话和Web证据包")
+    evidence_sub = evidence.add_subparsers(dest="evidence_command", required=True)
+    summary = evidence_sub.add_parser("summary", help="生成脱敏证据统计摘要")
+    summary.add_argument("--sessions-dir", type=Path, default=Path(".paramsure/sessions"), help="会话JSONL目录")
+    summary.add_argument("--artifacts-dir", type=Path, default=DEFAULT_ARTIFACTS, help="Web证据包目录")
     return parser
 
 
@@ -320,6 +331,36 @@ def config_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def doctor_command(args: argparse.Namespace) -> int:
+    config = AgentConfig.load(args.config)
+    checks = run_diagnostics(config, args.artifacts_dir)
+    print_line("ParaSure Doctor")
+    failed = 0
+    for check in checks:
+        status = "OK" if check.ok else "WARN"
+        if not check.ok:
+            failed += 1
+        print_line(f"- {check.name}: {status} | {check.detail}")
+    return 0 if failed == 0 else 1
+
+
+def evidence_command(args: argparse.Namespace) -> int:
+    if args.evidence_command != "summary":
+        raise ValueError(f"未知证据命令: {args.evidence_command}")
+    summary = summarize_evidence(args.sessions_dir, args.artifacts_dir)
+    print_line("ParaSure Evidence Summary")
+    print_line(f"Sessions: {summary.sessions}")
+    print_line(f"Events: {summary.events}")
+    print_line(f"Tool observations: {summary.tool_observations}")
+    print_line(f"Tool failures: {summary.tool_failures}")
+    print_line(f"Evidence bundles: {summary.evidence_bundles}")
+    print_line(f"Screenshots: {summary.screenshots}")
+    print_line(f"Failed bundles: {summary.failed_bundles}")
+    if summary.tool_names:
+        print_line(f"Tools used: {', '.join(summary.tool_names)}")
+    return 0
+
+
 def dispatch(args: argparse.Namespace) -> int:
     if args.command == "ingest":
         return ingest_command(args)
@@ -333,6 +374,10 @@ def dispatch(args: argparse.Namespace) -> int:
         return config_command(args)
     if args.command == "web-test":
         return web_test_command(args)
+    if args.command == "doctor":
+        return doctor_command(args)
+    if args.command == "evidence":
+        return evidence_command(args)
     raise ValueError(f"未知命令: {args.command}")
 
 

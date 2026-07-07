@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -49,13 +50,36 @@ class ToolRegistry:
         return [tool.openai_schema() for tool in self._tools.values()]
 
     def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        started = time.perf_counter()
         if name not in self._tools:
-            return {"ok": False, "error": f"未知工具: {name}"}
+            return _tool_envelope(
+                started,
+                {"ok": False, "error": f"未知工具: {name}", "error_type": "UnknownTool", "retry_count": 0},
+            )
         try:
             payload = self._tools[name].handler(arguments)
-            return {"ok": True, "tool": name, "result": payload}
+            return _tool_envelope(
+                started,
+                {"ok": True, "tool": name, "result": payload, "error_type": "", "retry_count": 0},
+            )
         except Exception as exc:  # noqa: BLE001 - tool failures are observations.
-            return {"ok": False, "tool": name, "error": str(exc)}
+            return _tool_envelope(
+                started,
+                {
+                    "ok": False,
+                    "tool": name,
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                    "retry_count": 0,
+                },
+            )
+
+
+def _tool_envelope(started: float, result: dict[str, Any]) -> dict[str, Any]:
+    result["duration_ms"] = round((time.perf_counter() - started) * 1000, 3)
+    result.setdefault("error_type", "")
+    result.setdefault("retry_count", 0)
+    return result
 
 
 def object_schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
